@@ -1,0 +1,26 @@
+name: Validate skill
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate Python syntax
+        run: python3 -m py_compile scripts/*.py skillpack/*.py
+
+      - name: Validate release metadata
+        run: python3 tests/test-release.py
+
+      - name: Test packager
+        run: python3 tests/test-pack.py
+
+      - name: Self-package check
+        run: python3 scripts/pack.py . --check

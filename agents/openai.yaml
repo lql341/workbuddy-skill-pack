@@ -1,0 +1,7 @@
+interface:
+  display_name: "WorkBuddy Skill Packager"
+  short_description: "Package and validate WorkBuddy skill archives"
+  default_prompt: "Use $workbuddy-skill-pack to build or verify a WorkBuddy skill zip."
+
+policy:
+  allow_implicit_invocation: true
