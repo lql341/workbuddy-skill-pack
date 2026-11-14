@@ -2,7 +2,7 @@
 name: workbuddy-skill-pack
 description: Package and validate any agent skill directory into a WorkBuddy/SkillHub-importable .zip, enforcing the platform's directory-depth, SKILL.md frontmatter, size, and metadata-file rules.
 slug: workbuddy-skill-pack
-version: 0.1.0
+version: 0.1.1
 summary: 把任意技能目录打包成 WorkBuddy 可导入的 zip，并校验层级/frontmatter/大小规则。
 license: MIT
 display_name: WorkBuddy 技能打包器
@@ -90,7 +90,8 @@ Details, evidence pointers, and the full frontmatter field table live in
 - `skillpack/` — `rules.py` (limits, exclusions, depth check), `frontmatter.py` (YAML reading with
   a minimal fallback), `packer.py` (validation, zip building, archive verification), `report.py`
   (errors/warnings/rendering), `cli.py`, `version.py`.
-- `references/packaging-rules.md` — rule table, recognized frontmatter keys, error catalogue,
-  verification snippets.
+- `references/packaging-rules.md` — auditable rule page: observable behaviour, original error
+  text, and a reproduce-it command per rule; recognized frontmatter keys; error catalogue; a dated
+  traceability appendix for internal client symbol names.
 - `tests/test-pack.py`, `tests/test-release.py` — `python3 tests/test-pack.py` before trusting a
   change; run `python3 scripts/pack.py . --check` so the repository keeps satisfying its own rules.

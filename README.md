@@ -79,9 +79,11 @@ Warnings cover the things users notice *after* import: missing `examples_zh`/`ex
 「试试这样用」 cards), non-slug names, folder/name mismatches, and frontmatter keys the client
 ignores.
 
-`references/packaging-rules.md` records the evidence behind each rule, the frontmatter field the
-client actually reads, an error-text catalogue, and what a package *cannot* control (icons and
-market-card fields are cloud asset properties, not zip content).
+`references/packaging-rules.md` makes each rule auditable: the observable behaviour, the exact
+error text, a command that reproduces it, the frontmatter fields the client actually reads, an
+error catalogue, and what a package *cannot* control (icons and market-card fields are cloud asset
+properties, not zip content). Internal client symbol names live in a dated traceability appendix,
+not in the rule text.
 
 ## Repository layout
 

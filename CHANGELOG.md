@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 - 2026-11-14
+
+- Rewrite `references/packaging-rules.md` as a page a public reader can audit: each rule now states
+  the observable behaviour, the exact error text, and a command that reproduces it (product
+  behaviour, on-disk install state, or strings in the shipped client bundle).
+- Move internal client symbol names out of the rule text into a traceability appendix, dated to
+  WorkBuddy 5.9.3, with an explicit note that they are minified internals that move between
+  releases and are not citations.
+
 ## 0.1.0 - 2026-11-14
 
 - Add `scripts/pack.py`: build `<name>.zip` from any skill directory, with a single top-level

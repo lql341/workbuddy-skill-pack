@@ -74,8 +74,9 @@ python3 scripts/pack.py --version
 警告覆盖"装完才会发现"的问题：缺 `examples_zh`/`examples_en`（详情页没有「试试这样用」卡片）、
 `name` 不是 slug、目录名与 name 不一致、客户端不认识的 frontmatter 键。
 
-`references/packaging-rules.md` 记录了每条规则的证据、客户端真正读取的 frontmatter 字段、报错文案
-对照表，以及**包内无法控制**的部分（图标、市场卡片的名称/简介/分类都是云端资产属性）。
+`references/packaging-rules.md` 把每条规则做成可自行核对的形态：可观察行为、原始报错文案、复现命令，
+客户端真正读取的 frontmatter 字段，报错对照表，以及**包内无法控制**的部分（图标、市场卡片的
+名称/简介/分类都是云端资产属性）。客户端内部符号名只出现在带日期的追溯附录里，不作为证据。
 
 ## 仓库结构
 
