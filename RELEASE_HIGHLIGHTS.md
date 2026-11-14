@@ -1,4 +1,4 @@
-- The rule reference is now auditable: every rule pairs the observed behaviour and error text with
-  a command that reproduces it, instead of citing internal client function names.
-- Client symbol names moved to a dated traceability appendix, so a reader can locate the same code
-  path without treating it as evidence.
+- New `--layout workbuddy`: flatten nested Python packages in the archive only, so a repository
+  that keeps `scripts/<pkg>/…` can still produce an uploadable package without restructuring.
+- The adapted tree is staged and `py_compile`d before zipping; collisions and residual depth stay
+  fatal, the source tree is untouched, and the report states what changed.

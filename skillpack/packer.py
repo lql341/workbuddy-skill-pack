@@ -6,11 +6,14 @@ import os
 import re
 import shutil
 import stat
+import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
 from .frontmatter import load_frontmatter
+from .layout import Plan, build_plan, patch_source
 from .report import Report
 from .rules import (
     CLOUD_LIMIT_BYTES,
@@ -34,8 +37,44 @@ def _require_skill_md(source: Path, report: Report) -> Path | None:
     return skill_md
 
 
+def _collect(
+    source: Path, keep: tuple[str, ...], extra_excludes: tuple[str, ...]
+) -> list[tuple[str, Path]]:
+    return list(iter_files(source, keep, extra_excludes))
+
+
+def _plan(source: Path, files: list[tuple[str, Path]], layout: str, report: Report) -> Plan:
+    paths = [relative for relative, _ in files]
+    sources = {relative: path for relative, path in files}
+
+    def reader(relative: str) -> str:
+        return sources[relative].read_text(encoding="utf-8")
+
+    try:
+        plan = build_plan(paths, layout, reader)
+    except ValueError as exc:
+        report.error(str(exc))
+        return Plan(layout=layout)
+    for problem in plan.problems:
+        report.error(f"layout {layout}: {problem}")
+    report.info["layout"] = plan.layout
+    if plan.changes:
+        report.info["layout_changes"] = plan.describe()
+        if "layout-warned" not in report.flags:
+            report.flags.add("layout-warned")
+            report.warn(
+                "packaged copy differs from the source tree: "
+                f"{plan.describe()} — run the extracted code before publishing"
+            )
+    return plan
+
+
 def validate_source(
-    source: Path, keep: tuple[str, ...], extra_excludes: tuple[str, ...], report: Report
+    source: Path,
+    keep: tuple[str, ...],
+    extra_excludes: tuple[str, ...],
+    report: Report,
+    layout: str = "asis",
 ) -> None:
     """Check a skill directory against every packaging rule."""
     skill_md = _require_skill_md(source, report)
@@ -88,11 +127,12 @@ def validate_source(
     if unknown:
         report.warn(f"frontmatter keys WorkBuddy ignores: {', '.join(sorted(unknown))}")
 
-    files = list(iter_files(source, keep, extra_excludes))
+    files = _collect(source, keep, extra_excludes)
     if not files:
         report.error("no files selected for packaging")
         return
-    paths = [relative for relative, _ in files]
+    plan = _plan(source, files, layout, report)
+    paths = plan.final_paths([relative for relative, _ in files])
     report.info["file_count"] = len(paths)
     report.info["files"] = paths
     check_depth(paths, report)
@@ -102,12 +142,74 @@ def validate_source(
         report.error(f"uncompressed package exceeds the cloud limit ({total} bytes)")
 
 
+def _stage(
+    source_files: list[tuple[str, Path]],
+    plan: Plan,
+    stage: Path,
+) -> list[tuple[str, Path]]:
+    """Materialise the planned layout in `stage`, returning (archive-relative, path) entries."""
+    entries: list[tuple[str, Path]] = []
+    for relative, path in source_files:
+        target_relative = plan.renames.get(relative, relative)
+        destination = stage / target_relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, destination)
+        if relative in plan.patched:
+            depth = target_relative.count("/")
+            destination.write_text(
+                patch_source(path.read_text(encoding="utf-8"), depth), encoding="utf-8"
+            )
+            destination.chmod(path.stat().st_mode & 0o777)
+        entries.append((target_relative, destination))
+    return entries
+
+
+def _compile(entries: list[tuple[str, Path]], report: Report) -> None:
+    modules = [str(path) for relative, path in entries if relative.endswith(".py")]
+    if not modules:
+        return
+    completed = subprocess.run(
+        [sys.executable, "-m", "py_compile", *modules],
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip().splitlines()[-3:]
+        report.error("packaged Python sources do not compile: " + " / ".join(detail))
+
+
+def _write_zip(name: str, entries: list[tuple[str, Path]], output: Path, report: Report) -> None:
+    directories = sorted(
+        {"/".join(relative.split("/")[:-1]) for relative, _ in entries if "/" in relative}
+    )
+    handle, temp_name = tempfile.mkstemp(suffix=".zip", dir=str(output.parent))
+    os.close(handle)
+    temp_path = Path(temp_name)
+    try:
+        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+            for directory in directories:
+                info = zipfile.ZipInfo(f"{name}/{directory}/", date_time=(1980, 1, 1, 0, 0, 0))
+                info.external_attr = (stat.S_IFDIR | 0o755) << 16
+                archive.writestr(info, b"")
+            for relative, path in entries:
+                info = zipfile.ZipInfo(f"{name}/{relative}", date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = (stat.S_IFREG | (path.stat().st_mode & 0o777)) << 16
+                archive.writestr(info, path.read_bytes())
+        shutil.move(str(temp_path), str(output))
+        output.chmod(0o644)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
 def pack(
     source: Path,
     output: Path,
     keep: tuple[str, ...],
     extra_excludes: tuple[str, ...],
     report: Report,
+    layout: str = "asis",
 ) -> None:
     """Write `<name>.zip` containing `<name>/...` for the validated source tree."""
     skill_md = _require_skill_md(source, report)
@@ -118,11 +220,12 @@ def pack(
         report.error("cannot read SKILL.md frontmatter while packing")
         return
     name = str(data.get("name") or source.name)
-    files = list(iter_files(source, keep, extra_excludes))
+    files = _collect(source, keep, extra_excludes)
     if not files:
         report.error("no files selected for packaging")
         return
-    paths = [relative for relative, _ in files]
+    plan = _plan(source, files, layout, report)
+    paths = plan.final_paths([relative for relative, _ in files])
     report.info["skill_name"] = name
     if "depth_offenders" not in report.info:
         check_depth(paths, report)
@@ -130,30 +233,18 @@ def pack(
         report.error("refusing to write an archive that would be rejected on upload")
         return
 
-    directories = sorted(
-        {"/".join(relative.split("/")[:-1]) for relative in paths if "/" in relative}
-    )
-
     output.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(suffix=".zip", dir=str(output.parent))
-    os.close(handle)
-    temp_path = Path(temp_name)
-    try:
-        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-            for directory in directories:
-                info = zipfile.ZipInfo(f"{name}/{directory}/", date_time=(1980, 1, 1, 0, 0, 0))
-                info.external_attr = (stat.S_IFDIR | 0o755) << 16
-                archive.writestr(info, b"")
-            for relative, path in files:
-                info = zipfile.ZipInfo(f"{name}/{relative}", date_time=(1980, 1, 1, 0, 0, 0))
-                info.compress_type = zipfile.ZIP_DEFLATED
-                info.external_attr = (stat.S_IFREG | (path.stat().st_mode & 0o777)) << 16
-                archive.writestr(info, path.read_bytes())
-        shutil.move(str(temp_path), str(output))
-        output.chmod(0o644)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink()
+    if plan.changes:
+        with tempfile.TemporaryDirectory(prefix="skillpack-") as directory:
+            entries = _stage(files, plan, Path(directory))
+            check_depth([relative for relative, _ in entries], report)
+            _compile(entries, report)
+            if not report.ok:
+                report.error("refusing to write an archive from a broken staging tree")
+                return
+            _write_zip(name, entries, output, report)
+    else:
+        _write_zip(name, files, output, report)
 
     size = output.stat().st_size
     report.info["zip_path"] = str(output)

@@ -12,6 +12,7 @@ class Report:
         self.errors: list[str] = []
         self.warnings: list[str] = []
         self.info: dict[str, object] = {}
+        self.flags: set[str] = set()
 
     def error(self, message: str) -> None:
         self.errors.append(message)
@@ -45,6 +46,8 @@ class Report:
         if summary["zip_path"]:
             print(f"zip:    {summary['zip_path']} ({summary['zip_bytes']} bytes)")
         print(f"files:  {summary['file_count']}")
+        if self.info.get("layout_changes"):
+            print(f"layout: {self.info['layout_changes']}")
         for warning in self.warnings:
             print(f"  warn: {warning}")
         for error in self.errors:

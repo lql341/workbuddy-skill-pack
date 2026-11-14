@@ -2,7 +2,7 @@
 name: workbuddy-skill-pack
 description: Package and validate any agent skill directory into a WorkBuddy/SkillHub-importable .zip, enforcing the platform's directory-depth, SKILL.md frontmatter, size, and metadata-file rules.
 slug: workbuddy-skill-pack
-version: 0.1.1
+version: 0.2.0
 summary: 把任意技能目录打包成 WorkBuddy 可导入的 zip，并校验层级/frontmatter/大小规则。
 license: MIT
 display_name: WorkBuddy 技能打包器
@@ -44,6 +44,9 @@ python3 scripts/pack.py <skill-dir> -o ~/Downloads
 # explicit output path, extra excludes, machine-readable summary
 python3 scripts/pack.py <skill-dir> -o ~/Downloads/my-skill.zip --exclude 'drafts/*' --json
 
+# flatten nested Python packages in the package only, source stays untouched
+python3 scripts/pack.py <skill-dir> -o ~/Downloads --layout workbuddy
+
 # diagnose an archive that already failed to upload
 python3 scripts/pack.py <path>/my-skill.zip
 ```
@@ -57,8 +60,10 @@ user instead of hand-waving.
 1. `SKILL.md` at the skill root; YAML frontmatter required.
 2. `name` and `description` are mandatory, non-empty.
 3. **At most two path segments inside the skill root**: `skill/<dir>/<file>`. A Python package
-   at `scripts/my_pkg/mod.py` is rejected — move packages up to `skill/my_pkg/mod.py` and put
-   the skill root on `sys.path` in the entry script.
+   at `scripts/my_pkg/mod.py` is rejected. Either move the package up in the source
+   (`skill/my_pkg/mod.py` + the skill root on `sys.path`), or keep the repository as it is and
+   pass `--layout workbuddy`, which lifts such packages and patches the importers **in the
+   packaged copy only** (see the section below).
 4. Package ≤ 5 MiB (cloud upload limit), warning threshold at 4 MiB.
 5. Dev/CI artifacts are excluded by default: `.git`, `.github`, `tests`, `.gitignore`,
    `.gitattributes`, `__pycache__`, `*.pyc`, `*.slurm`, `.DS_Store`, caches.
@@ -70,6 +75,23 @@ user instead of hand-waving.
 
 Details, evidence pointers, and the full frontmatter field table live in
 `references/packaging-rules.md`.
+
+## Packaging a repository you must not restructure
+
+`--layout workbuddy` adapts the archive at build time, so a repository that keeps
+`scripts/<pkg>/…` for its own reasons still produces an uploadable package:
+
+- every `dir/pkg/` that contains `__init__.py` becomes `pkg/` at the skill root;
+- each Python file that imports such a package and sits at `skill/<file>` or `skill/<dir>/<file>`
+  gets a marked bootstrap (`# workbuddy-layout: skill root on sys.path`) that prepends the skill
+  root to `sys.path`, inserted after any docstring and `__future__` import;
+- the staged tree is `py_compile`d before zipping, and the run aborts if it does not compile;
+- name collisions (`pkg/` already at the root, two `dir/pkg/` wanting the same name) and any
+  remaining `a/b/file` depth are still hard errors — the transform never guesses.
+
+The source tree is never modified. The archive does differ from it, so
+**run the extracted package before publishing** — the packager states this as a warning and lists
+exactly what it moved and patched.
 
 ## Answering the follow-up questions
 
@@ -88,7 +110,8 @@ Details, evidence pointers, and the full frontmatter field table live in
 - `scripts/pack.py` — CLI entrypoint (adds the repository root to `sys.path`, then calls
   `skillpack.cli.main`).
 - `skillpack/` — `rules.py` (limits, exclusions, depth check), `frontmatter.py` (YAML reading with
-  a minimal fallback), `packer.py` (validation, zip building, archive verification), `report.py`
+  a minimal fallback), `layout.py` (build-time flattening and `sys.path` patching),
+  `packer.py` (validation, staging, zip building, archive verification), `report.py`
   (errors/warnings/rendering), `cli.py`, `version.py`.
 - `references/packaging-rules.md` — auditable rule page: observable behaviour, original error
   text, and a reproduce-it command per rule; recognized frontmatter keys; error catalogue; a dated

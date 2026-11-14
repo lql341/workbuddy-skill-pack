@@ -52,6 +52,9 @@ python3 scripts/pack.py ./my-skill -o ./out --json
 # 把默认排除的文件重新纳入
 python3 scripts/pack.py ./my-skill -o ./out --keep '*.slurm' --exclude 'drafts/*'
 
+# 只在包内把嵌套 Python 包上提（源码不动）
+python3 scripts/pack.py ./my-skill -o ./out --layout workbuddy'
+
 # 版本号（CI 与发布流程会和 VERSION 对齐）
 python3 scripts/pack.py --version
 ```
@@ -70,6 +73,17 @@ python3 scripts/pack.py --version
 | 剔除安装元数据 | `_skillhub_meta.json`、`_marketplace_meta.json`、`_knot_meta.json`、`_builtin_market_meta.json`、`_user_meta.json` |
 | 权限 | 保留 unix 可执行位；不写 ZIP 扩展字段，时间戳固定（可复现） |
 | 成品复检 | 重新打开压缩包：根目录唯一、`SKILL.md` 存在、层级、frontmatter、可执行文件清单 |
+
+`--layout workbuddy` 是给"仓库必须保留 `scripts/<pkg>/…`"的项目用的（导入、测试、工具链都依赖它）。
+它只对打包副本做四件事：
+
+1. 把含 `__init__.py` 的 `dir/pkg/` 上提到技能根目录的 `pkg/`；
+2. 给导入该包的 Python 文件插入带标记的 `sys.path` 引导（插在 docstring 与 `__future__` 之后）；
+3. 打包前对暂存树做 `py_compile`，失败即中止；
+4. 不猜：同名冲突、以及任何残留的 `a/b/file` 层级仍然是硬错误。
+
+源码目录不会被修改，但包与源码存在差异——工具会明确警告并列出移动/改动的文件，所以
+**发布前请先跑一遍解包后的产物**。
 
 警告覆盖"装完才会发现"的问题：缺 `examples_zh`/`examples_en`（详情页没有「试试这样用」卡片）、
 `name` 不是 slug、目录名与 name 不一致、客户端不认识的 frontmatter 键。

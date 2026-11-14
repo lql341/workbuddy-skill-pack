@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from .frontmatter import parse_frontmatter
+from .layout import LAYOUTS
 from .packer import pack, validate_source, validate_zip
 from .report import Report
 from .version import version
@@ -68,6 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="GLOB",
         help="exclude extra paths, matched against the path relative to the skill root",
     )
+    parser.add_argument(
+        "--layout",
+        choices=LAYOUTS,
+        default="asis",
+        help="asis (default) or workbuddy, which lifts nested Python packages to the skill root "
+        "for the packaged copy only",
+    )
     parser.add_argument("--json", action="store_true", help="print a JSON summary")
     parser.add_argument("--version", action="store_true", help="print the packager version and exit")
     return parser
@@ -95,9 +103,9 @@ def main(argv: list[str] | None = None) -> int:
     keep = tuple(args.keep)
     excludes = tuple(args.exclude)
     report = Report()
-    validate_source(source, keep, excludes, report)
+    validate_source(source, keep, excludes, report, layout=args.layout)
     if report.ok and output is not None:
-        pack(source, output, keep, excludes, report)
+        pack(source, output, keep, excludes, report, layout=args.layout)
         if report.ok:
             validate_zip(output, report)
     return report.emit(str(source), args.json)

@@ -55,6 +55,9 @@ python3 scripts/pack.py ./my-skill -o ./out --json
 # opt back into files excluded by default
 python3 scripts/pack.py ./my-skill -o ./out --keep '*.slurm' --exclude 'drafts/*'
 
+# flatten nested Python packages in the package only (source stays untouched)
+python3 scripts/pack.py ./my-skill -o ./out --layout workbuddy'
+
 # packager version (CI and release workflows compare it with VERSION)
 python3 scripts/pack.py --version
 ```
@@ -74,6 +77,18 @@ the offending paths.
 | Stripped install metadata | `_skillhub_meta.json`, `_marketplace_meta.json`, `_knot_meta.json`, `_builtin_market_meta.json`, `_user_meta.json` |
 | Permissions | unix exec bits preserved; ZIP extra fields omitted, timestamps fixed |
 | Post-build verification | reopen the archive: single root, `SKILL.md` present, depth, frontmatter, executable list |
+
+`--layout workbuddy` exists for repositories that must keep `scripts/<pkg>/…` (imports, tests and
+tooling depend on it). For the packaged copy only, it
+
+1. lifts every `dir/pkg/` containing `__init__.py` to `pkg/` at the skill root,
+2. inserts a marked `sys.path` bootstrap into each Python file that imports it (after any
+   docstring and `__future__` import),
+3. `py_compile`s the staged tree and aborts if it fails,
+4. refuses to guess: name collisions and any remaining `a/b/file` depth stay fatal errors.
+
+The source tree is never touched, but the archive then differs from it — the packager says so in a
+warning and lists what it moved and patched, so **run the extracted package before publishing**.
 
 Warnings cover the things users notice *after* import: missing `examples_zh`/`examples_en` (the
 「试试这样用」 cards), non-slug names, folder/name mismatches, and frontmatter keys the client

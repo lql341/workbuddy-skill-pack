@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 - 2026-11-14
+
+- Add `--layout workbuddy`: build an uploadable archive from a repository that must keep nested
+  Python packages (`scripts/<pkg>/…`). For the packaged copy it lifts each `dir/pkg/` containing
+  `__init__.py` to the skill root and inserts a marked `sys.path` bootstrap into the files that
+  import it, after any docstring and `__future__` import.
+- Stage and `py_compile` the adapted tree before zipping, and abort when it does not compile.
+- Keep the transform honest: the source tree is never modified, name collisions and residual
+  `a/b/file` depth remain fatal errors, and the report lists exactly what was moved and patched
+  with a warning that the archive differs from the repository.
+- Add `layout.py` plus nine tests, including an end-to-end run of the extracted entrypoint and a
+  check that the source tree is untouched.
+
 ## 0.1.1 - 2026-11-14
 
 - Rewrite `references/packaging-rules.md` as a page a public reader can audit: each rule now states

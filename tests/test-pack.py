@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,6 +17,7 @@ for path in (ROOT, ROOT / "scripts"):
 
 from skillpack import cli  # noqa: E402
 from skillpack.frontmatter import load_frontmatter, parse_minimal  # noqa: E402
+from skillpack.layout import MARKER, build_plan, patch_source  # noqa: E402
 from skillpack.packer import pack, validate_source, validate_zip  # noqa: E402
 from skillpack.report import Report  # noqa: E402
 from skillpack.rules import CLOUD_LIMIT_BYTES, iter_files  # noqa: E402
@@ -195,6 +197,140 @@ class PackagingTests(unittest.TestCase):
             self.assertTrue(any("exactly one root folder" in error for error in report.errors))
 
 
+NESTED_SKILL = """---
+name: nested-skill
+description: Skill whose Python package sits one level too deep for WorkBuddy.
+examples_en:
+  - run the entrypoint
+---
+
+# Nested
+
+Run `python3 scripts/entry.py`; it imports the package from `scripts/`.
+"""
+
+
+def make_nested_skill(root: Path) -> Path:
+    skill = make_skill(
+        root,
+        body=NESTED_SKILL,
+        files={
+            "scripts/entry.py": (
+                "#!/usr/bin/env python3\n"
+                "from pkg.core import answer\n"
+                "print(answer())\n"
+            ),
+            "scripts/pkg/__init__.py": "VALUE = 41\n",
+            "scripts/pkg/core.py": "def answer():\n    return 41 + 1\n",
+        },
+    )
+    (skill / "scripts" / "entry.py").chmod(0o755)
+    return skill
+
+
+class LayoutTests(unittest.TestCase):
+    def plan_for(self, skill: Path):
+        paths = [relative for relative, _ in iter_files(skill, (), ())]
+        sources = {relative: skill / relative for relative in paths}
+
+        def reader(relative: str) -> str:
+            return sources[relative].read_text(encoding="utf-8")
+
+        return build_plan(paths, "workbuddy", reader)
+
+    def test_plan_lifts_packages_and_patches_importers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan = self.plan_for(make_nested_skill(Path(directory)))
+        self.assertEqual(plan.packages, {"scripts/pkg": "pkg"})
+        self.assertEqual(plan.renames["scripts/pkg/core.py"], "pkg/core.py")
+        self.assertEqual(plan.patched, ["scripts/entry.py"])
+        self.assertEqual(plan.problems, [])
+
+    def test_asis_layout_never_rewrites(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            skill = make_nested_skill(Path(directory))
+            paths = [relative for relative, _ in iter_files(skill, (), ())]
+            plan = build_plan(paths, "asis", lambda relative: "")
+        self.assertFalse(plan.changes)
+
+    def test_bootstrap_lands_after_docstring_and_future_import(self) -> None:
+        text = (
+            '"""Doc."""\n'
+            "from __future__ import annotations\n"
+            "\n"
+            "from pkg.core import answer\n"
+        )
+        patched = patch_source(text, depth=1)
+        self.assertLess(patched.index("from __future__"), patched.index(MARKER))
+        self.assertLess(patched.index(MARKER), patched.index("from pkg.core"))
+        self.assertEqual(patch_source(patched, depth=1), patched, "patching must be idempotent")
+
+    def test_conflicting_root_package_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            skill = make_nested_skill(Path(directory))
+            (skill / "pkg").mkdir()
+            (skill / "pkg" / "keep.py").write_text("", encoding="utf-8")
+            report = Report()
+            validate_source(skill, (), (), report, layout="workbuddy")
+            self.assertTrue(any("already has an entry named pkg" in e for e in report.errors))
+
+    def test_unfixable_depth_still_fails_with_workbuddy_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            skill = make_nested_skill(Path(directory))
+            deep = skill / "docs" / "a" / "b"
+            deep.mkdir(parents=True)
+            (deep / "note.md").write_text("x", encoding="utf-8")
+            report = Report()
+            validate_source(skill, (), (), report, layout="workbuddy")
+            self.assertTrue(any("docs/a/b/note.md" in e for e in report.errors))
+
+
+class LayoutPackagingTests(unittest.TestCase):
+    def test_package_is_flattened_and_still_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = make_nested_skill(root)
+            output = root / "nested-skill.zip"
+            report = Report()
+            validate_source(skill, (), (), report, layout="workbuddy")
+            self.assertTrue(report.ok, report.errors)
+            pack(skill, output, (), (), report, layout="workbuddy")
+            self.assertTrue(report.ok, report.errors)
+            validate_zip(output, report)
+            self.assertTrue(report.ok, report.errors)
+
+            with zipfile.ZipFile(output) as archive:
+                names = archive.namelist()
+                self.assertIn("nested-skill/pkg/core.py", names)
+                self.assertNotIn("nested-skill/scripts/pkg/core.py", names)
+                entry = archive.read("nested-skill/scripts/entry.py").decode()
+                self.assertIn(MARKER, entry)
+                mode = archive.getinfo("nested-skill/scripts/entry.py").external_attr >> 16
+                self.assertTrue(mode & 0o111)
+
+            extracted = root / "extracted"
+            with zipfile.ZipFile(output) as archive:
+                archive.extractall(extracted)
+            completed = subprocess.run(
+                [sys.executable, str(extracted / "nested-skill" / "scripts" / "entry.py")],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(completed.stdout.strip(), "42")
+
+    def test_source_tree_is_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = make_nested_skill(root)
+            before = (skill / "scripts" / "entry.py").read_text(encoding="utf-8")
+            report = Report()
+            pack(skill, root / "nested-skill.zip", (), (), report, layout="workbuddy")
+            self.assertTrue(report.ok, report.errors)
+            self.assertEqual((skill / "scripts" / "entry.py").read_text(encoding="utf-8"), before)
+            self.assertTrue((skill / "scripts" / "pkg" / "core.py").is_file())
+
+
 class CliTests(unittest.TestCase):
     def run_cli(self, argv: list[str]) -> tuple[int, str]:
         buffer = io.StringIO()
@@ -247,6 +383,17 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             code, output = self.run_cli([str(root / "demo-skill.zip")])
             self.assertEqual(code, 0, output)
+
+    def test_layout_flag_flattens_the_package(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = make_nested_skill(root)
+            out_dir = root / "out"
+            code, output = self.run_cli([str(skill), "-o", str(out_dir), "--layout", "workbuddy"])
+            self.assertEqual(code, 0, output)
+            self.assertIn("layout: moved scripts/pkg/ -> pkg/", output)
+            with zipfile.ZipFile(out_dir / "nested-skill.zip") as archive:
+                self.assertIn("nested-skill/pkg/core.py", archive.namelist())
 
     def test_version_flag(self) -> None:
         code, output = self.run_cli(["--version"])
